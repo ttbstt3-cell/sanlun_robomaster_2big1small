@@ -1,0 +1,25 @@
+# Build outputs
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvopt*
+MDK-ARM/*.lst
+MDK-ARM/*.o
+MDK-ARM/*.axf
+MDK-ARM/*.elf
+MDK-ARM/*.hex
+MDK-ARM/*.bin
+MDK-ARM/*.htm
+MDK-ARM/*.map
+
+# Keil related
+*.dbgsupp
+*.dep
+
+# STM32CubeMX
+*.ioc.backup
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Debug
+*.log
