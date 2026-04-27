@@ -123,9 +123,9 @@ int main(void)
   // - 如果轮子缓慢【前进】，说明补偿过头，把数字【改小】（比如从20改成 10, 0, 甚至 -10, -20...）
   // 请反复修改下面三个数字并烧录，直到开机后三个轮子绝对静止！
   // =========================================================
-  #define TRIM_M1  30  // 👈 1号大轮的专属补偿值 (请根据实际情况改动)
-  #define TRIM_M3  30  // 👈 3号小轮的专属补偿值
-  #define TRIM_M4  30  // 👈 4号小轮的专属补偿值
+  #define TRIM_M1  -10  // 👈 1号大轮的专属补偿值 (请根据实际情况改动)
+  #define TRIM_M3  -20  // 👈 3号小轮的专属补偿值
+  #define TRIM_M4  -10  // 👈 4号大轮的专属补偿值
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -149,118 +149,93 @@ int main(void)
     }
     
     SBUS_Process();
-    
-    // ====== 双模式遥控控制 ======
+
+    // ====== 双模式控制 ======
     if (SBUS_IsValid())
     {
-        int16_t channel1 = SBUS_GetChannel(1);  // 【右摇杆 左右】 (调试时用)
-        int16_t channel2 = SBUS_GetChannel(2);  // 【右摇杆 上下】 (主驱动 / 1号轮)
-        int16_t channel3 = SBUS_GetChannel(3);  // ！！！【左摇杆 上下】 (改成了这个控制方向！) ！！！
-        
-        int16_t channel9 = SBUS_GetChannel(9);  // 【主开关 SwB】 切换 驾驶/调试
-        int16_t channel5 = SBUS_GetChannel(5);  // 【副开关 SwE】 切换 3号/4号轮
-        
-        // 判断拨杆状态：小于1000进入模式1，大于1000进入模式2
-        if (channel9 < 1000) 
-        {
-            // ====================================================
-            // 模式 1：同步驾驶模式 (左手上下方向，右手上下油门)
-            // ====================================================
-            int16_t drive_speed = 0;
-            uint16_t steer_pulse = 1500; 
-            
-            // 计算整体驱动速度
-            int16_t ch2_offset = channel2 - 1024;
-            if (ch2_offset > -50 && ch2_offset < 50) {
-                drive_speed = 0;  // 死区：停止
-            } else if (ch2_offset >= 50) {
-                drive_speed = (ch2_offset * 1000) / (1700 - 1024);
-            } else {
-                drive_speed = (ch2_offset * 1000) / (1024 - 300);
-            }
-            
-            if (drive_speed > 1000) drive_speed = 1000;
-            if (drive_speed < -1000) drive_speed = -1000;
-            
-            // 1号大轮按比例换算 (50/63)
-            int16_t servo1_speed = (drive_speed * 50) / 63;
-            // 4号大轮按比例换算 (50/63)
-            int16_t servo4_speed = (drive_speed * 50) / 63;
+        int16_t channel2 = SBUS_GetChannel(2);  // 【右摇杆 上下】 控制轮子
 
-            // ！！！核心优化：所有输出速度无条件加上微调补偿值 TRIM !!!
-            Servo_Set360(1, servo1_speed + TRIM_M1);
-            Servo_Set360(3, drive_speed + TRIM_M3);
-            Servo_Set360(4, servo4_speed + TRIM_M4);
-            
-            // ！！！【全新修改】[左手上下 CH3] 计算转向角度 !!!
-            #define STEER_MIN_PULSE  500   
-            #define STEER_MAX_PULSE  2500  
-            
-            int16_t ch3_offset = channel3 - 1024; // <--- 改用 CH3 (左手上下)
+        int16_t channel10 = SBUS_GetChannel(10); // 【CH10】 模式切换
+        int16_t channel6 = SBUS_GetChannel(6);   // 【CH6】 单独控制1号轮
+        int16_t channel8 = SBUS_GetChannel(8);   // 【CH8】 单独控制3号轮
+        int16_t channel9 = SBUS_GetChannel(9);   // 【CH9】 单独控制4号轮
+        int16_t channel3 = SBUS_GetChannel(3);   // 【左摇杆 上下】 控制转向
+
+        int16_t servo1_speed = 0;
+        int16_t servo3_speed = 0;
+        int16_t servo4_speed = 0;
+
+        // 计算右摇杆上下速度
+        int16_t ch2_offset = channel2 - 1024;
+        int16_t ch2_speed = 0;
+        if (ch2_offset > -50 && ch2_offset < 50) {
+            ch2_speed = 0;  // 死区
+        } else if (ch2_offset >= 50) {
+            ch2_speed = (ch2_offset * 1000) / (1700 - 1024);
+        } else {
+            ch2_speed = (ch2_offset * 1000) / (1024 - 300);
+        }
+
+        // 限幅
+        if (ch2_speed > 1000) ch2_speed = 1000;
+        if (ch2_speed < -1000) ch2_speed = -1000;
+
+        if (channel10 >= 1000)
+        {
+            // ====== 同步模式：CH10开启，三个轮子一起动 + 转向 ======
+            servo1_speed = -(ch2_speed * 50) / 63;  // 1号大轮
+            servo3_speed = -ch2_speed;             // 3号小轮
+            servo4_speed = -(ch2_speed * 50) / 63; // 4号大轮
+
+            // CH3控制转向舵机（方向取反）
+            int16_t ch3_offset = channel3 - 1024;
+            uint16_t steer_pulse = 1500;
             if (ch3_offset > -30 && ch3_offset < 30) {
-                steer_pulse = 1500; 
+                steer_pulse = 1500;  // 死区：中位
+            } else if (ch3_offset >= 30) {
+                steer_pulse = 1500 - (ch3_offset * 1000) / (1700 - 1024);
             } else {
-                steer_pulse = 1500 + (ch3_offset * 1000) / (1700 - 1024);
+                steer_pulse = 1500 - (ch3_offset * 1000) / (1024 - 300);
             }
-            
-            if (steer_pulse > STEER_MAX_PULSE) steer_pulse = STEER_MAX_PULSE;
-            if (steer_pulse < STEER_MIN_PULSE) steer_pulse = STEER_MIN_PULSE;
-            
+            if (steer_pulse < 500) steer_pulse = 500;
+            if (steer_pulse > 2500) steer_pulse = 2500;
             Servo_Set180(2, steer_pulse);
         }
         else
         {
-            // ====================================================
-            // 模式 2：纯右手调试模式 
-            // ====================================================
-            int16_t servo1_speed = 0;
-            int16_t servo3_speed = 0;
-            int16_t servo4_speed = 0;
-            
-            // 1. [右手上下 CH2] 永远独立控制 1号大轮
-            int16_t ch2_offset = channel2 - 1024;
-            if (ch2_offset > -50 && ch2_offset < 50) servo1_speed = 0;
-            else if (ch2_offset >= 50) servo1_speed = (ch2_offset * 1000) / (1700 - 1024);
-            else servo1_speed = (ch2_offset * 1000) / (1024 - 300);
-
-            // 2. [右手左右 CH1] 获取大轮测试速度
-            int16_t ch1_offset = channel1 - 1024;
-            int16_t ch1_speed = 0;
-            if (ch1_offset > -50 && ch1_offset < 50) ch1_speed = 0;
-            else if (ch1_offset >= 50) ch1_speed = (ch1_offset * 1000) / (1700 - 1024);
-            else ch1_speed = (ch1_offset * 1000) / (1024 - 300);
-
-            // 4号大轮按比例换算 (50/63)
-            int16_t servo4_speed_big = (ch1_speed * 50) / 63;
-
-            // 3. 用 CH5 (SwE) 决定右手左右是控制 3号 还是 4号
-            if (channel5 < 1000) {
-                servo3_speed = ch1_speed; // CH5拨在一侧：测3号
-            } else {
-                servo4_speed = servo4_speed_big; // CH5拨在另一侧(或中间)：测4号大轮
+            // ====== 独立模式：CH6/CH8/CH9分别控制各轮 ======
+            // CH6拨杆控制1号轮（大轮，需50/63换算，方向取反）
+            if (channel6 >= 1000) {
+                servo1_speed = -(ch2_speed * 50) / 63;
             }
-            
-            // 速度限幅保护
-            if (servo1_speed > 1000) servo1_speed = 1000; if (servo1_speed < -1000) servo1_speed = -1000;
-            if (servo3_speed > 1000) servo3_speed = 1000; if (servo3_speed < -1000) servo3_speed = -1000;
-            if (servo4_speed > 1000) servo4_speed = 1000; if (servo4_speed < -1000) servo4_speed = -1000;
-            
-            // 下发速度指令 (带着物理微调补偿)
-            Servo_Set360(1, servo1_speed + TRIM_M1);
-            Servo_Set360(3, servo3_speed + TRIM_M3);
-            Servo_Set360(4, servo4_speed + TRIM_M4);
-            
-            Servo_Set180(2, 1500); // 调试时转向舵机锁定
+
+            // CH8拨杆控制3号轮（小轮，直接输出，方向取反）
+            if (channel8 >= 1000) {
+                servo3_speed = -ch2_speed;
+            }
+
+            // CH9拨杆控制4号轮（大轮，需50/63换算，方向取反）
+            if (channel9 >= 1000) {
+                servo4_speed = -(ch2_speed * 50) / 63;
+            }
+
+            // 独立模式时转向舵机锁定中位
+            Servo_Set180(2, 1500);
         }
+
+        // 下发速度指令 (带着物理微调补偿)
+        Servo_Set360(1, servo1_speed + TRIM_M1);
+        Servo_Set360(3, servo3_speed + TRIM_M3);
+        Servo_Set360(4, servo4_speed + TRIM_M4);
     }
     else
     {
         // ====== 完美的断电失控保护 =====
         // ！！！失控时绝对不能发 0，必须发微调补偿值，否则关控后车依然会倒退 !!!
-        Servo_Set360(1, TRIM_M1); 
+        Servo_Set360(1, TRIM_M1);
         Servo_Set360(3, TRIM_M3);
         Servo_Set360(4, TRIM_M4);
-        Servo_Set180(2, 1500); 
+        Servo_Set180(2, 1500);  // 失控时转向锁定中位
     }
     
     HAL_Delay(10);
